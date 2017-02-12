@@ -156,6 +156,7 @@ public class SortingCollection<T> implements Iterable<T> {
     }
 
     public void add(final T rec) {
+        System.out.println("TESTING!!!!!!!!!");
         if (doneAdding) {
             throw new IllegalStateException("Cannot add after calling doneAdding()");
         }
