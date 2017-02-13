@@ -179,7 +179,7 @@ public class SortingCollection<T> implements Iterable<T> {
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            service.submit(() -> spillToDisk());
+            service.submit(this::spillToDisk);
             ramRecords = (T[])Array.newInstance(componentType, maxRecordsInRam);
             numRecordsInRam = 0;
         }
@@ -212,7 +212,7 @@ public class SortingCollection<T> implements Iterable<T> {
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            service.submit(() -> spillToDisk());
+            service.submit(this::spillToDisk);
         }
 
         service.shutdown();
