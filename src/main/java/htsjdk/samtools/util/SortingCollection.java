@@ -34,7 +34,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Serializable;
 import java.lang.reflect.Array;
-import java.sql.Time;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -113,8 +112,8 @@ public class SortingCollection<T> implements Iterable<T> {
      */
     private final Comparator<T> comparator;
     private final int maxRecordsInRam;
-    private int numRecordsInRam = 0;
-    private T[] ramRecords;
+    private volatile int numRecordsInRam = 0;
+    private volatile T[] ramRecords;
     private boolean iterationStarted = false;
     private boolean doneAdding = false;
 
@@ -165,22 +164,23 @@ public class SortingCollection<T> implements Iterable<T> {
     ExecutorService service;
     BlockingQueue<T[]> queue;
 
-    public void add(final T rec) {
+    public synchronized void add(final T rec) {
         if (doneAdding) {
             throw new IllegalStateException("Cannot add after calling doneAdding()");
         }
         if (iterationStarted) {
             throw new IllegalStateException("Cannot add after calling iterator()");
         }
+
         if (numRecordsInRam == maxRecordsInRam) {
-            System.out.println("SPILL TO DISK!!!!!!!!!!");
+            System.out.println("SPILL TO DISK!!!!!!!!!!" + numRecordsInRam);
             try {
                 queue.put(ramRecords);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
             service.submit(this::spillToDisk);
-            ramRecords = (T[])Array.newInstance(componentType, maxRecordsInRam);
+            ramRecords = (T[]) Array.newInstance(componentType, maxRecordsInRam);
             numRecordsInRam = 0;
         }
         ramRecords[numRecordsInRam++] = rec;
@@ -246,7 +246,7 @@ public class SortingCollection<T> implements Iterable<T> {
      * Sort the records in memory, write them to a file, and clear the buffer of records in memory.
      */
     private void spillToDisk() {
-        System.out.println("START SPILLING");
+        System.out.println("START SPILLING" + numRecordsInRam);
         int numRecords;
         if (doneAdding)
             numRecords = this.numRecordsInRam;
@@ -283,7 +283,7 @@ public class SortingCollection<T> implements Iterable<T> {
 
             //this.numRecordsInRam = 0;
             this.files.add(f);
-            System.out.println("END SPILLING");
+            System.out.println("END SPILLING" + numRecordsInRam);
         }
         catch (IOException e) {
             throw new RuntimeIOException(e);
