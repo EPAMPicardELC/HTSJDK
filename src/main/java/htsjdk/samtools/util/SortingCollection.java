@@ -173,7 +173,7 @@ public class SortingCollection<T> implements Iterable<T> {
         }
 
         if (numRecordsInRam == maxRecordsInRam) {
-            System.out.println("SPILL TO DISK!!!!!!!!!!" + numRecordsInRam);
+            System.out.println("SPILL TO DISK!!!!!!!!!! Number of records in Ram: " + numRecordsInRam);
             try {
                 queue.put(ramRecords);
             } catch (InterruptedException e) {
@@ -246,7 +246,7 @@ public class SortingCollection<T> implements Iterable<T> {
      * Sort the records in memory, write them to a file, and clear the buffer of records in memory.
      */
     private void spillToDisk() {
-        System.out.println("START SPILLING" + numRecordsInRam);
+        System.out.println("START SPILLING Number of records in Ram: " + numRecordsInRam);
         int numRecords;
         if (doneAdding)
             numRecords = this.numRecordsInRam;
@@ -283,7 +283,7 @@ public class SortingCollection<T> implements Iterable<T> {
 
             //this.numRecordsInRam = 0;
             this.files.add(f);
-            System.out.println("END SPILLING" + numRecordsInRam);
+            System.out.println("END SPILLING Number of records in Ram: " + numRecordsInRam);
         }
         catch (IOException e) {
             throw new RuntimeIOException(e);
