@@ -153,7 +153,7 @@ public class SortingCollection<T> implements Iterable<T> {
         this.codec = codec;
         this.comparator = comparator;
         this.maxRecordsInRam = maxRecordsInRam;
-        this.ramRecords = (T[])Array.newInstance(componentType, maxRecordsInRam);
+        this.ramRecords = (T[])Array.newInstance(componentType, maxRecordsInRam / 2);
 
         this.componentType = componentType;
         service = Executors.newCachedThreadPool();
@@ -180,7 +180,7 @@ public class SortingCollection<T> implements Iterable<T> {
                 e.printStackTrace();
             }
             service.submit(this::spillToDisk);
-            ramRecords = (T[]) Array.newInstance(componentType, maxRecordsInRam);
+            ramRecords = (T[]) Array.newInstance(componentType, maxRecordsInRam / 2);
             numRecordsInRam = 0;
         }
         ramRecords[numRecordsInRam++] = rec;
