@@ -28,6 +28,10 @@ import htsjdk.samtools.util.CloseableIterator;
 
 import java.io.Closeable;
 import java.text.MessageFormat;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingDeque;
 
 /**
  * Describes functionality for objects that produce {@link SAMRecord}s and associated information.
@@ -542,6 +546,14 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
     static class AssertingIterator implements SAMRecordIterator {
 
+        private static int PACK_SIZE = 10000;
+        private static int MAX_THREADS_COUNT = 100;
+
+        private BlockingQueue<SAMRecord> pack = new LinkedBlockingDeque<>(PACK_SIZE);
+
+        private BlockingQueue<BlockingQueue<SAMRecord>> queue = new LinkedBlockingDeque<>();
+        private ExecutorService service = Executors.newFixedThreadPool(MAX_THREADS_COUNT);
+
         static AssertingIterator of(final CloseableIterator<SAMRecord> iterator) {
             return new AssertingIterator(iterator);
         }
@@ -552,6 +564,13 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         public AssertingIterator(final CloseableIterator<SAMRecord> iterator) {
             wrappedIterator = iterator;
+            service.submit(() -> {
+                try {
+                    queue.put(makeNewPack(wrappedIterator, PACK_SIZE / 10));
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            });
         }
 
         public SAMRecordIterator assertSorted(final SAMFileHeader.SortOrder sortOrder) {
@@ -565,8 +584,51 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
             return this;
         }
 
+        private BlockingQueue<SAMRecord> makeNewPack(CloseableIterator<SAMRecord> iterator, int size){
+            BlockingQueue<SAMRecord> newPack = new LinkedBlockingDeque<>(size);
+
+            for (int i = 0; i < size; i++){
+                if (!iterator.hasNext())
+                    return newPack;
+                try {
+                    newPack.put(iterator.next());
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            return newPack;
+        }
+
         public SAMRecord next() {
-            final SAMRecord result = wrappedIterator.next();
+            if (pack.size() == 0)
+                if (hasNext())
+                    try {
+                        pack = queue.take();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                else
+                    return null;
+
+            if (pack.size() == PACK_SIZE/10 && wrappedIterator.hasNext()) {
+                service.submit(() -> {
+                    try {
+                        queue.put(makeNewPack(wrappedIterator, PACK_SIZE));
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                });
+            }
+
+            SAMRecord result = null;
+            try {
+                result = pack.take();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            //final SAMRecord result = wrappedIterator.next();
             if (comparator != null) {
                 if (previous != null) {
                     if (comparator.fileOrderCompare(previous, result) > 0) {
@@ -589,7 +651,12 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         public void close() { wrappedIterator.close(); }
 
-        public boolean hasNext() { return wrappedIterator.hasNext(); }
+        public boolean hasNext() {
+            if (!wrappedIterator.hasNext() && pack.size() == 0 && queue.size() == 0){
+                service.shutdownNow();
+                return false;
+            } else return true;
+        }
 
         public void remove() { wrappedIterator.remove(); }
     }
