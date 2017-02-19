@@ -566,7 +566,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
             wrappedIterator = iterator;
             service.submit(() -> {
                 try {
-                    queue.put(makeNewPack(wrappedIterator, PACK_SIZE / 10));
+                    queue.put(makeNewPack(wrappedIterator, PACK_SIZE));
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -611,7 +611,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
                 else
                     return null;
 
-            if (pack.size() == PACK_SIZE/10 && wrappedIterator.hasNext()) {
+            if (pack.size() == PACK_SIZE && wrappedIterator.hasNext()) {
                 service.submit(() -> {
                     try {
                         queue.put(makeNewPack(wrappedIterator, PACK_SIZE));
