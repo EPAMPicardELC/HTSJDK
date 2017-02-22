@@ -28,6 +28,8 @@ import htsjdk.samtools.util.CloseableIterator;
 
 import java.io.Closeable;
 import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -549,9 +551,10 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
         private static int PACK_SIZE = 10000;
         private static int MAX_THREADS_COUNT = 100;
 
-        private BlockingQueue<SAMRecord> pack = new LinkedBlockingDeque<>(PACK_SIZE);
+        private List<SAMRecord> pack = new ArrayList<>(PACK_SIZE);
+        private int index = 0;
 
-        private BlockingQueue<BlockingQueue<SAMRecord>> queue = new LinkedBlockingDeque<>();
+        private BlockingQueue<ArrayList<SAMRecord>> queue = new LinkedBlockingDeque<>();
         private ExecutorService service = Executors.newFixedThreadPool(MAX_THREADS_COUNT);
 
         static AssertingIterator of(final CloseableIterator<SAMRecord> iterator) {
@@ -584,34 +587,31 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
             return this;
         }
 
-        private BlockingQueue<SAMRecord> makeNewPack(CloseableIterator<SAMRecord> iterator, int size){
-            BlockingQueue<SAMRecord> newPack = new LinkedBlockingDeque<>(size);
+        private ArrayList<SAMRecord> makeNewPack(CloseableIterator<SAMRecord> iterator, int size){
+            ArrayList<SAMRecord> newPack = new ArrayList<>(size);
 
             for (int i = 0; i < size; i++){
                 if (!iterator.hasNext())
                     return newPack;
-                try {
-                    newPack.put(iterator.next());
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+                newPack.add(iterator.next());
             }
 
             return newPack;
         }
 
         public SAMRecord next() {
-            if (pack.size() == 0)
+            if (index == pack.size())
                 if (hasNext())
                     try {
                         pack = queue.take();
+                        index = 0;
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
                 else
                     return null;
 
-            if (pack.size() == PACK_SIZE && wrappedIterator.hasNext()) {
+            if (index == 0 && wrappedIterator.hasNext()) {
                 service.submit(() -> {
                     try {
                         queue.put(makeNewPack(wrappedIterator, PACK_SIZE));
@@ -621,12 +621,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
                 });
             }
 
-            SAMRecord result = null;
-            try {
-                result = pack.take();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
+            SAMRecord result = pack.get(index++);
 
             //final SAMRecord result = wrappedIterator.next();
             if (comparator != null) {
@@ -652,7 +647,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
         public void close() { wrappedIterator.close(); }
 
         public boolean hasNext() {
-            if (!wrappedIterator.hasNext() && pack.size() == 0 && queue.size() == 0){
+            if (!wrappedIterator.hasNext() && index == pack.size() && queue.size() == 0){
                 service.shutdownNow();
                 return false;
             } else return true;
