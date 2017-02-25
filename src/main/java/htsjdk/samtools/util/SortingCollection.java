@@ -200,7 +200,6 @@ public class SortingCollection<T> implements Iterable<T> {
         }
 
         doneAdding = true;
-        System.out.println("DONE_ADDING!!!!!!!!!!");
 
         if (this.files.isEmpty()) {
             return;
@@ -246,7 +245,6 @@ public class SortingCollection<T> implements Iterable<T> {
      * Sort the records in memory, write them to a file, and clear the buffer of records in memory.
      */
     private void spillToDisk() {
-        System.out.println("START SPILLING Number of records in Ram: " + numRecordsInRam);
         int numRecords;
         if (doneAdding)
             numRecords = this.numRecordsInRam;
@@ -281,9 +279,7 @@ public class SortingCollection<T> implements Iterable<T> {
                 }
             }
 
-            //this.numRecordsInRam = 0;
             this.files.add(f);
-            System.out.println("END SPILLING Number of records in Ram: " + numRecordsInRam);
         }
         catch (IOException e) {
             throw new RuntimeIOException(e);
