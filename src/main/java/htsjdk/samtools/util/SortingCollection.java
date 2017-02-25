@@ -173,7 +173,6 @@ public class SortingCollection<T> implements Iterable<T> {
         }
 
         if (numRecordsInRam == maxRecordsInRam) {
-            System.out.println("SPILL TO DISK!!!!!!!!!! Number of records in Ram: " + numRecordsInRam);
             try {
                 queue.put(ramRecords);
             } catch (InterruptedException e) {
