@@ -606,8 +606,8 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         private static AssertingIterator wrappedAssertingIterator;
 
-        private static int PACK_SIZE = 10000;
-        private static int MAX_THREADS_COUNT = 100;
+        private static final int PACK_SIZE = 10000;
+        private static final int MAX_THREADS_COUNT = 100;
 
         private List<SAMRecord> pack = new ArrayList<>(PACK_SIZE);
         private int index = 0;
