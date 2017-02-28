@@ -60,7 +60,7 @@ import java.util.concurrent.*;
 public class SortingCollection<T> implements Iterable<T> {
 
 
-    public static final int QUEUE_CAPACITY = 10;
+    public static final int QUEUE_CAPACITY = 20;
 
     /**
      * Client must implement this class, which defines the way in which records are written to and
@@ -121,7 +121,7 @@ public class SortingCollection<T> implements Iterable<T> {
     private boolean doneAdding = false;
     final Class<T> componentType;
     ExecutorService service;
-    BlockingQueue<T[]> queue;
+    BlockingQueue<T[]> ramRecordsQueue;
 
     /**
      * Set to true when all temp files have been cleaned up
@@ -162,7 +162,8 @@ public class SortingCollection<T> implements Iterable<T> {
         this.ramRecords = (T[])Array.newInstance(componentType, maxRecordsInRam);
         this.componentType=componentType;
         service= Executors.newCachedThreadPool();
-        queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
+        //service= Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()*3/4);
+        ramRecordsQueue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     }
 
     public synchronized void add(final T rec) {
@@ -175,16 +176,11 @@ public class SortingCollection<T> implements Iterable<T> {
         if (numRecordsInRam == maxRecordsInRam) {
 
             try {
-                queue.put(ramRecords);
+                ramRecordsQueue.put(ramRecords);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            service.submit(new Runnable() {
-                @Override
-                public void run() {
-                    spillToDisk();
-                }
-            });
+            service.submit(this::spillToDisk);
             ramRecords = (T[])Array.newInstance(componentType, maxRecordsInRam);
             numRecordsInRam = 0;
 
@@ -219,17 +215,11 @@ public class SortingCollection<T> implements Iterable<T> {
 
         if (this.numRecordsInRam > 0) {
             try {
-                queue.put(ramRecords);
+                ramRecordsQueue.put(ramRecords);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            service.submit(new Runnable(){
-
-                @Override
-                public void run() {
-                    spillToDisk();
-                }
-            });
+            service.submit(this::spillToDisk);
         }
 
         service.shutdown();
@@ -272,7 +262,7 @@ public class SortingCollection<T> implements Iterable<T> {
 
             T[] currentArray = null;
             try {
-                currentArray = queue.take();
+                currentArray = ramRecordsQueue.take();
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }

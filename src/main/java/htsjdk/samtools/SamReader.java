@@ -28,6 +28,12 @@ import htsjdk.samtools.util.CloseableIterator;
 
 import java.io.Closeable;
 import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 
 /**
  * Describes functionality for objects that produce {@link SAMRecord}s and associated information.
@@ -546,6 +552,15 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
     static class AssertingIterator implements SAMRecordIterator {
 
+        private final static int RECORD_PACK_SIZE = 10000;
+        private final static int PACK_QUEUE_SIZE = 20;
+        private final static int MAX_COUNT_OF_THREADS = 100;
+
+        private List<SAMRecord> recordPack = new ArrayList<SAMRecord>(RECORD_PACK_SIZE);
+        private BlockingQueue<ArrayList<SAMRecord>> packQueue = new LinkedBlockingQueue<>(PACK_QUEUE_SIZE);
+        private ExecutorService service = Executors.newFixedThreadPool(MAX_COUNT_OF_THREADS);
+        private int listIndex = 0;
+
         static AssertingIterator of(final CloseableIterator<SAMRecord> iterator) {
             return new AssertingIterator(iterator);
         }
@@ -556,6 +571,25 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         public AssertingIterator(final CloseableIterator<SAMRecord> iterator) {
             wrappedIterator = iterator;
+            
+            service.submit(()-> {
+                try {
+                    packQueue.put(makePack(wrappedIterator,RECORD_PACK_SIZE));
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        private ArrayList<SAMRecord> makePack(CloseableIterator<SAMRecord> iterator, int recordPackSize) {
+            ArrayList<SAMRecord> currentPack = new ArrayList<>(recordPackSize);
+
+            for(int i = 0; i < recordPackSize; i++){
+                if(!iterator.hasNext())
+                    return currentPack;
+                currentPack.add(iterator.next());
+            }
+            return currentPack;
         }
 
         public SAMRecordIterator assertSorted(final SAMFileHeader.SortOrder sortOrder) {
@@ -570,7 +604,30 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
         }
 
         public SAMRecord next() {
-            final SAMRecord result = wrappedIterator.next();
+
+            if(recordPack.size() == listIndex)
+                if(hasNext())
+                    try {
+                        recordPack = packQueue.take();
+                        listIndex = 0;
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                else
+                    return null;
+
+            if(wrappedIterator.hasNext() && listIndex == 0){
+                service.submit(() -> {
+                    try {
+                        packQueue.put(makePack(wrappedIterator,RECORD_PACK_SIZE));
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                });
+            }
+
+            SAMRecord result = recordPack.get(listIndex++);
+
             if (comparator != null) {
                 if (previous != null) {
                     if (comparator.fileOrderCompare(previous, result) > 0) {
@@ -593,7 +650,13 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         public void close() { wrappedIterator.close(); }
 
-        public boolean hasNext() { return wrappedIterator.hasNext(); }
+        public boolean hasNext() {
+            if (!wrappedIterator.hasNext() && recordPack.size()== listIndex && packQueue.size()==0){
+                service.shutdownNow();
+                return false;
+            } else
+                return true;
+        }
 
         public void remove() { wrappedIterator.remove(); }
     }
