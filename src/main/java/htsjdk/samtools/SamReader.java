@@ -28,10 +28,13 @@ import htsjdk.samtools.util.CloseableIterator;
 
 import java.io.Closeable;
 import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.*;
 
 /**
  * Describes functionality for objects that produce {@link SAMRecord}s and associated information.
- *
+ * <p>
  * Currently, only deprecated readers implement this directly; actual readers implement this
  * via {@link ReaderImplementation} and {@link PrimitiveSamReader}, which {@link SamReaderFactory}
  * converts into full readers by using {@link PrimitiveSamReaderToSamReaderAdapter}.
@@ -40,15 +43,23 @@ import java.text.MessageFormat;
  */
 public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
-    /** Describes a type of SAM file. */
+    /**
+     * Describes a type of SAM file.
+     */
     public abstract class Type {
-        /** A string representation of this type. */
+        /**
+         * A string representation of this type.
+         */
         abstract String name();
 
-        /** The recommended file extension for SAMs of this type, without a period. */
+        /**
+         * The recommended file extension for SAMs of this type, without a period.
+         */
         public abstract String fileExtension();
 
-        /** The recommended file extension for SAM indexes of this type, without a period, or null if this type is not associated with indexes. */
+        /**
+         * The recommended file extension for SAM indexes of this type, without a period, or null if this type is not associated with indexes.
+         */
         abstract String indexExtension();
 
         static class TypeImpl extends Type {
@@ -334,9 +345,8 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
      * {@link SamReader} itself is somewhat large and bulky, but the core functionality can be captured in
      * relatively few methods, which are included here. For documentation, see the corresponding methods
      * in {@link SamReader}.
-     *
+     * <p>
      * See also: {@link PrimitiveSamReaderToSamReaderAdapter}, {@link ReaderImplementation}
-     *
      */
     public interface PrimitiveSamReader {
         Type type();
@@ -367,10 +377,9 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
     /**
      * Decorator for a {@link SamReader.PrimitiveSamReader} that expands its functionality into a {@link SamReader},
      * given the backing {@link SamInputResource}.
-     *
+     * <p>
      * Wraps the {@link Indexing} interface as well, which was originally separate from {@link SamReader} but in practice
      * the two are always implemented by the same class.
-     *
      */
     class PrimitiveSamReaderToSamReaderAdapter implements SamReader, Indexing {
         final PrimitiveSamReader p;
@@ -381,11 +390,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
             this.resource = resource;
         }
 
-        /**
-         * Access the underlying {@link PrimitiveSamReader} used by this adapter.
-         * @return the {@link PrimitiveSamReader} used by this adapter.
-         */
-        public PrimitiveSamReader underlyingReader() {
+        PrimitiveSamReader underlyingReader() {
             return p;
         }
 
@@ -474,12 +479,13 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         @Override
         public SAMRecordIterator iterator() {
-            return new AssertingIterator(p.getIterator());
+             return Defaults.USE_ASYNC_ITERATOR_FOR_SAMREADER ? new AsyncAssertingIterator(p.getIterator()) : new AssertingIterator(p.getIterator());
         }
 
         @Override
         public SAMRecordIterator iterator(final SAMFileSpan chunks) {
-            return new AssertingIterator(p.getIterator(chunks));
+
+            return Defaults.USE_ASYNC_ITERATOR_FOR_SAMREADER ? new AsyncAssertingIterator(p.getIterator(chunks)) : new AssertingIterator(p.getIterator(chunks));
         }
 
         @Override
@@ -547,6 +553,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
     static class AssertingIterator implements SAMRecordIterator {
 
         static AssertingIterator of(final CloseableIterator<SAMRecord> iterator) {
+
             return new AssertingIterator(iterator);
         }
 
@@ -591,19 +598,109 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
             return result;
         }
 
-        public void close() { wrappedIterator.close(); }
+        public void close() {
+            wrappedIterator.close();
+        }
 
-        public boolean hasNext() { return wrappedIterator.hasNext(); }
+        public boolean hasNext() {
+            return wrappedIterator.hasNext();
+        }
 
-        public void remove() { wrappedIterator.remove(); }
+        public void remove() {
+            wrappedIterator.remove();
+        }
+    }
+
+    static class AsyncAssertingIterator implements SAMRecordIterator {
+
+        private static AssertingIterator assertingIterator;
+    //Fixed pool single
+        private ExecutorService service = Executors.newSingleThreadExecutor();
+        private BlockingQueue<ArrayList<SAMRecord>> queue = new LinkedBlockingQueue<>();
+
+        private static final int BLOCK_SIZE = 1000;
+        private List<SAMRecord> block = new ArrayList<>(BLOCK_SIZE);
+        private int index = 0;
+
+
+        public AsyncAssertingIterator(final CloseableIterator<SAMRecord> iterator) {
+
+            assertingIterator = new AssertingIterator(iterator);
+            service.submit(() -> {
+                try {
+                    queue.put(newBlock(assertingIterator, BLOCK_SIZE));
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        static AssertingIterator of(final CloseableIterator<SAMRecord> iterator) {
+            return AssertingIterator.of(iterator);
+        }
+
+        public SAMRecordIterator assertSorted(final SAMFileHeader.SortOrder sortOrder) {
+            return assertingIterator.assertSorted(sortOrder);
+        }
+
+        private ArrayList<SAMRecord> newBlock(CloseableIterator<SAMRecord> iterator, int size) {
+
+            ArrayList<SAMRecord> block = new ArrayList<>(size);
+            for (int i = 0; i < size; i++) {
+                if (!iterator.hasNext())  break;
+                block.add(iterator.next());
+            }
+
+            return block;
+        }
+
+        @Override
+        public SAMRecord next() {
+            if (index == block.size())
+                if (hasNext())
+                    try {
+                        block = queue.take();
+                        index = 0;
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                else
+                    return null;
+
+            if (index == 0 && assertingIterator.hasNext()) {
+                service.submit(() -> {
+                    try {
+                        queue.put(newBlock(assertingIterator, BLOCK_SIZE));
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                });
+            }
+
+            return block.get(index++);
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (!assertingIterator.hasNext() && queue.size() == 0 && index == block.size()) {
+               // service.shutdown();
+                return false;
+            } else return true;
+        }
+
+        @Override
+        public void close() {
+            service.shutdown();
+            assertingIterator.close();
+        }
     }
 
     /**
      * Internal interface for SAM/BAM/CRAM file reader implementations,
      * as distinct from non-file-based readers.
-     *
+     * <p>
      * Implemented as an abstract class to enforce better access control.
-     *
+     * <p>
      * TODO -- Many of these methods only apply for a subset of implementations,
      * TODO -- and either no-op or throw an exception for the others.
      * TODO -- We should consider refactoring things to avoid this;
