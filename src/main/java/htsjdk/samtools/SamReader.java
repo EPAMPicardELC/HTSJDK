@@ -615,10 +615,12 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
             wrappedAssertingIterator = new AssertingIterator(iterator);
 
             service.submit(() -> {
-                try {
-                    queue.put(makeNewPack(wrappedAssertingIterator, PACK_SIZE));
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+                while (wrappedAssertingIterator.hasNext()) {
+                    try {
+                        queue.put(makeNewPack(wrappedAssertingIterator, PACK_SIZE));
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
                 }
             });
         }
@@ -655,16 +657,6 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
                     }
                 else
                     throw new IllegalStateException();
-
-            if (index == 0 && wrappedAssertingIterator.hasNext()) {
-                service.submit(() -> {
-                    try {
-                        queue.put(makeNewPack(wrappedAssertingIterator, PACK_SIZE));
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                });
-            }
 
             return pack.get(index++);
         }
