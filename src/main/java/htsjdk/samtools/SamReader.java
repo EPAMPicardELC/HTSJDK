@@ -30,10 +30,7 @@ import java.io.Closeable;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.*;
 
 /**
  * Describes functionality for objects that produce {@link SAMRecord}s and associated information.
@@ -658,7 +655,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
                         e.printStackTrace();
                     }
                 else
-                    return null;
+                    throw new IllegalStateException();
 
             if (index == 0 && wrappedAssertingIterator.hasNext()) {
                 service.submit(() -> {
