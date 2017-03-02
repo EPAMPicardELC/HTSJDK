@@ -479,7 +479,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         @Override
         public SAMRecordIterator iterator() {
-             return Defaults.USE_ASYNC_ITERATOR_FOR_SAMREADER ? new AsyncAssertingIterator(p.getIterator()) : new AssertingIterator(p.getIterator());
+            return Defaults.USE_ASYNC_ITERATOR_FOR_SAMREADER ? new AsyncAssertingIterator(p.getIterator()) : new AssertingIterator(p.getIterator());
         }
 
         @Override
@@ -614,7 +614,6 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
     static class AsyncAssertingIterator implements SAMRecordIterator {
 
         private static AssertingIterator assertingIterator;
-    //Fixed pool single
         private ExecutorService service = Executors.newSingleThreadExecutor();
         private BlockingQueue<ArrayList<SAMRecord>> queue = new LinkedBlockingQueue<>();
 
@@ -622,6 +621,17 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
         private List<SAMRecord> block = new ArrayList<>(BLOCK_SIZE);
         private int index = 0;
 
+
+        private ArrayList<SAMRecord> newBlock(CloseableIterator<SAMRecord> iterator, int size) {
+
+            ArrayList<SAMRecord> block = new ArrayList<>(size);
+            for (int i = 0; i < size; i++) {
+                if (!iterator.hasNext()) break;
+                block.add(iterator.next());
+            }
+
+            return block;
+        }
 
         public AsyncAssertingIterator(final CloseableIterator<SAMRecord> iterator) {
 
@@ -641,17 +651,6 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         public SAMRecordIterator assertSorted(final SAMFileHeader.SortOrder sortOrder) {
             return assertingIterator.assertSorted(sortOrder);
-        }
-
-        private ArrayList<SAMRecord> newBlock(CloseableIterator<SAMRecord> iterator, int size) {
-
-            ArrayList<SAMRecord> block = new ArrayList<>(size);
-            for (int i = 0; i < size; i++) {
-                if (!iterator.hasNext())  break;
-                block.add(iterator.next());
-            }
-
-            return block;
         }
 
         @Override
@@ -682,10 +681,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
 
         @Override
         public boolean hasNext() {
-            if (!assertingIterator.hasNext() && queue.size() == 0 && index == block.size()) {
-               // service.shutdown();
-                return false;
-            } else return true;
+            return (assertingIterator.hasNext() || queue.size() != 0 || index != block.size());
         }
 
         @Override
