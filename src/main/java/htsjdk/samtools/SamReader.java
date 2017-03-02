@@ -604,13 +604,12 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
         private static AssertingIterator wrappedAssertingIterator;
 
         private static final int PACK_SIZE = 10000;
-        private static final int MAX_THREADS_COUNT = 100;
 
         private List<SAMRecord> pack = new ArrayList<>(PACK_SIZE);
         private int index = 0;
 
         private BlockingQueue<ArrayList<SAMRecord>> queue = new LinkedBlockingDeque<>();
-        private ExecutorService service = Executors.newFixedThreadPool(MAX_THREADS_COUNT);
+        private ExecutorService service = Executors.newCachedThreadPool();
 
         public AsyncAssertingIterator(final CloseableIterator<SAMRecord> iterator){
             wrappedAssertingIterator = new AssertingIterator(iterator);
