@@ -28,6 +28,8 @@ import htsjdk.samtools.util.CloseableIterator;
 
 import java.io.Closeable;
 import java.text.MessageFormat;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Describes functionality for objects that produce {@link SAMRecord}s and associated information.
@@ -554,9 +556,12 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
         private final CloseableIterator<SAMRecord> wrappedIterator;
         private SAMRecord previous = null;
         private SAMRecordComparator comparator = null;
+        ExecutorService serv = Executors.newCachedThreadPool();
 
         public AssertingIterator(final CloseableIterator<SAMRecord> iterator) {
+
             wrappedIterator = iterator;
+
         }
 
         @Override
@@ -603,6 +608,7 @@ public interface SamReader extends Iterable<SAMRecord>, Closeable {
         @Override
         public void remove() { wrappedIterator.remove(); }
     }
+
 
     /**
      * Internal interface for SAM/BAM/CRAM file reader implementations,

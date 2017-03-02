@@ -42,6 +42,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.TreeSet;
+import java.util.concurrent.*;
 
 /**
  * Collection to which many records can be added.  After all records are added, the collection can be
@@ -58,6 +59,7 @@ import java.util.TreeSet;
  */
 public class SortingCollection<T> implements Iterable<T> {
 
+    public static final int QUEUE_CAPACITY = 100;
     /**
      * Client must implement this class, which defines the way in which records are written to and
      * read from file.
@@ -115,6 +117,9 @@ public class SortingCollection<T> implements Iterable<T> {
     private T[] ramRecords;
     private boolean iterationStarted = false;
     private boolean doneAdding = false;
+    final Class<T> componentType;
+    ExecutorService serv;
+    BlockingQueue<T[]> recordsQueue;
 
     /**
      * Set to true when all temp files have been cleaned up
@@ -153,6 +158,9 @@ public class SortingCollection<T> implements Iterable<T> {
         this.comparator = comparator;
         this.maxRecordsInRam = maxRecordsInRam;
         this.ramRecords = (T[])Array.newInstance(componentType, maxRecordsInRam);
+        this.componentType = componentType;
+        serv = Executors.newSingleThreadExecutor();
+        recordsQueue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     }
 
     public void add(final T rec) {
@@ -162,9 +170,24 @@ public class SortingCollection<T> implements Iterable<T> {
         if (iterationStarted) {
             throw new IllegalStateException("Cannot add after calling iterator()");
         }
+
+
         if (numRecordsInRam == maxRecordsInRam) {
-            spillToDisk();
+            try {
+                recordsQueue.put(ramRecords);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            serv.submit(new Runnable() {
+                @Override
+                        public void run() {spillToDisk();}
+
+            });
+            ramRecords = (T[])Array.newInstance(componentType, maxRecordsInRam);
+            numRecordsInRam = 0;
         }
+
         ramRecords[numRecordsInRam++] = rec;
     }
 
@@ -188,7 +211,25 @@ public class SortingCollection<T> implements Iterable<T> {
         }
 
         if (this.numRecordsInRam > 0) {
-            spillToDisk();
+            try {
+                recordsQueue.put(ramRecords);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            serv.submit(new Runnable() {
+
+                @Override
+                public void run() {
+                    spillToDisk();
+                }
+            });
+        }
+
+        serv.shutdown();
+        try {
+            serv.awaitTermination(1, TimeUnit.DAYS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
 
         // Facilitate GC
@@ -215,17 +256,30 @@ public class SortingCollection<T> implements Iterable<T> {
      * Sort the records in memory, write them to a file, and clear the buffer of records in memory.
      */
     private void spillToDisk() {
+
+        int numOfRecords;
+        if (!(doneAdding))
+            numOfRecords = this.maxRecordsInRam;
+        else
+            numOfRecords = this.numRecordsInRam;
+
         try {
-            Arrays.sort(this.ramRecords, 0, this.numRecordsInRam, this.comparator);
+            T[] currentArray = null;
+            try {
+                currentArray = recordsQueue.take();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            Arrays.sort(currentArray, 0, numOfRecords, this.comparator);
             final File f = newTempFile();
             OutputStream os = null;
             try {
                 os = tempStreamFactory.wrapTempOutputStream(new FileOutputStream(f), Defaults.BUFFER_SIZE);
                 this.codec.setOutputStream(os);
-                for (int i = 0; i < this.numRecordsInRam; ++i) {
-                    this.codec.encode(ramRecords[i]);
+                for (int i = 0; i < numOfRecords; ++i) {
+                    this.codec.encode(currentArray[i]);
                     // Facilitate GC
-                    this.ramRecords[i] = null;
+                    currentArray[i] = null;
                 }
 
                 os.flush();
